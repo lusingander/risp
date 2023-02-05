@@ -1,8 +1,5 @@
-use std::{collections::HashMap, num::ParseFloatError};
-
-fn main() {
-    println!("Hello, world!");
-}
+use core::fmt;
+use std::{collections::HashMap, io, num::ParseFloatError};
 
 #[derive(Clone)]
 enum RispExp {
@@ -10,6 +7,21 @@ enum RispExp {
     Number(f64),
     List(Vec<RispExp>),
     Func(fn(&[RispExp]) -> Result<RispExp>),
+}
+
+impl fmt::Display for RispExp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let str = match self {
+            RispExp::Symbol(s) => s.clone(),
+            RispExp::Number(n) => n.to_string(),
+            RispExp::List(list) => {
+                let xs: Vec<String> = list.iter().map(|x| x.to_string()).collect();
+                format!("({})", xs.join(","))
+            }
+            RispExp::Func(_) => "Function {}".to_string(),
+        };
+        write!(f, "{}", str)
+    }
 }
 
 enum RispErr {
@@ -126,5 +138,33 @@ fn eval(exp: &RispExp, env: &mut RispEnv) -> Result<RispExp> {
             }
         }
         RispExp::Func(_) => Err(RispErr::Reason("unexpected form".to_string())),
+    }
+}
+
+fn parse_eval(expr: String, env: &mut RispEnv) -> Result<RispExp> {
+    let (parsed, _) = parse(&tokenize(expr))?;
+    let evaled = eval(&parsed, env)?;
+    Ok(evaled)
+}
+
+fn slurp_expr() -> String {
+    let mut expr = String::new();
+    io::stdin()
+        .read_line(&mut expr)
+        .expect("failed to read line");
+    expr
+}
+
+fn main() {
+    let env = &mut default_env();
+    loop {
+        println!("risp > ");
+        let expr = slurp_expr();
+        match parse_eval(expr, env) {
+            Ok(res) => println!("=> {}", res),
+            Err(e) => match e {
+                RispErr::Reason(msg) => println!("ERROR: {}", msg),
+            },
+        }
     }
 }
