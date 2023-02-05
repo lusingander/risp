@@ -5,6 +5,7 @@ use std::{collections::HashMap, io, num::ParseFloatError};
 enum RispExp {
     Symbol(String),
     Number(f64),
+    Bool(bool),
     List(Vec<RispExp>),
     Func(fn(&[RispExp]) -> Result<RispExp>),
 }
@@ -14,6 +15,7 @@ impl fmt::Display for RispExp {
         let str = match self {
             RispExp::Symbol(s) => s.clone(),
             RispExp::Number(n) => n.to_string(),
+            RispExp::Bool(b) => b.to_string(),
             RispExp::List(list) => {
                 let xs: Vec<String> = list.iter().map(|x| x.to_string()).collect();
                 format!("({})", xs.join(","))
@@ -70,11 +72,35 @@ fn read_seq(tokens: &[String]) -> Result<(RispExp, &[String])> {
 }
 
 fn parse_atom(token: &str) -> RispExp {
-    let potential_float: core::result::Result<f64, ParseFloatError> = token.parse();
-    match potential_float {
-        Ok(v) => RispExp::Number(v),
-        Err(_) => RispExp::Symbol(token.to_string().clone()),
+    match token.as_ref() {
+        "true" => RispExp::Bool(true),
+        "false" => RispExp::Bool(false),
+        _ => {
+            let potential_float: core::result::Result<f64, ParseFloatError> = token.parse();
+            match potential_float {
+                Ok(v) => RispExp::Number(v),
+                Err(_) => RispExp::Symbol(token.to_string().clone()),
+            }
+        }
     }
+}
+
+macro_rules! ensure_tonicity {
+    ($check_fn: expr) => {{
+        |args: &[RispExp]| -> Result<RispExp> {
+            let floats = parse_list_of_floats(args)?;
+            let (first, rest) = floats
+                .split_first()
+                .ok_or(RispErr::Reason("expected at least one number".to_string()))?;
+            fn f(prev: &f64, xs: &[f64]) -> bool {
+                match xs.split_first() {
+                    Some((y, ys)) => $check_fn(prev, y) && f(y, ys),
+                    None => true,
+                }
+            }
+            Ok(RispExp::Bool(f(first, rest)))
+        }
+    }};
 }
 
 fn default_env() -> RispEnv {
@@ -99,6 +125,26 @@ fn default_env() -> RispEnv {
             Ok(RispExp::Number(first - sum_of_rest))
         }),
     );
+    data.insert(
+        "=".to_string(),
+        RispExp::Func(ensure_tonicity!(|a, b| a == b)),
+    );
+    data.insert(
+        ">".to_string(),
+        RispExp::Func(ensure_tonicity!(|a, b| a > b)),
+    );
+    data.insert(
+        ">=".to_string(),
+        RispExp::Func(ensure_tonicity!(|a, b| a >= b)),
+    );
+    data.insert(
+        "<".to_string(),
+        RispExp::Func(ensure_tonicity!(|a, b| a < b)),
+    );
+    data.insert(
+        "<=".to_string(),
+        RispExp::Func(ensure_tonicity!(|a, b| a <= b)),
+    );
     RispEnv { data }
 }
 
@@ -121,6 +167,7 @@ fn eval(exp: &RispExp, env: &mut RispEnv) -> Result<RispExp> {
             .ok_or(RispErr::Reason(format!("unexpected symbol k = '{}'", k)))
             .map(|x| x.clone()),
         RispExp::Number(_) => Ok(exp.clone()),
+        RispExp::Bool(_) => Ok(exp.clone()),
         RispExp::List(list) => {
             let (first_form, arg_forms) = list
                 .split_first()
