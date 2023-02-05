@@ -1,9 +1,10 @@
-use std::io;
+use std::io::{self, stdout, Write};
 
 fn main() {
     let env = &mut risp::default_env();
     loop {
-        println!("risp > ");
+        print!("risp > ");
+        stdout().flush().unwrap();
         let expr = slurp_expr();
         match parse_eval(expr, env) {
             Ok(res) => println!("=> {}", res),
