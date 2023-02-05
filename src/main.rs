@@ -161,17 +161,31 @@ fn parse_single_float(exp: &RispExp) -> Result<f64> {
 
 fn eval(exp: &RispExp, env: &mut RispEnv) -> Result<RispExp> {
     match exp {
-        RispExp::Symbol(k) => env
-            .data
-            .get(k)
-            .ok_or(RispErr::Reason(format!("unexpected symbol k = '{}'", k)))
-            .map(|x| x.clone()),
+        RispExp::Symbol(k) => eval_symbol(k, env),
         RispExp::Number(_) => Ok(exp.clone()),
         RispExp::Bool(_) => Ok(exp.clone()),
-        RispExp::List(list) => {
-            let (first_form, arg_forms) = list
-                .split_first()
-                .ok_or(RispErr::Reason("expected a non-empty list".to_string()))?;
+        RispExp::List(list) => eval_list(list, env),
+        RispExp::Func(_) => Err(RispErr::Reason("unexpected form".to_string())),
+    }
+}
+
+fn eval_symbol(key: &String, env: &mut RispEnv) -> Result<RispExp> {
+    env.data
+        .get(key)
+        .ok_or(RispErr::Reason(format!(
+            "unexpected symbol key = '{}'",
+            key
+        )))
+        .map(|x| x.clone())
+}
+
+fn eval_list(list: &[RispExp], env: &mut RispEnv) -> Result<RispExp> {
+    let (first_form, arg_forms) = list
+        .split_first()
+        .ok_or(RispErr::Reason("expected a non-empty list".to_string()))?;
+    match eval_built_in_form(first_form, arg_forms, env) {
+        Some(result) => result,
+        None => {
             let first_eval = eval(first_form, env)?;
             match first_eval {
                 RispExp::Func(f) => {
@@ -184,8 +198,61 @@ fn eval(exp: &RispExp, env: &mut RispEnv) -> Result<RispExp> {
                 _ => Err(RispErr::Reason("first form must be a function".to_string())),
             }
         }
-        RispExp::Func(_) => Err(RispErr::Reason("unexpected form".to_string())),
     }
+}
+
+fn eval_built_in_form(
+    exp: &RispExp,
+    arg_forms: &[RispExp],
+    env: &mut RispEnv,
+) -> Option<Result<RispExp>> {
+    match exp {
+        RispExp::Symbol(s) => match s.as_ref() {
+            "if" => Some(eval_if_args(arg_forms, env)),
+            "def" => Some(eval_def_args(arg_forms, env)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn eval_if_args(arg_forms: &[RispExp], env: &mut RispEnv) -> Result<RispExp> {
+    let test_form = arg_forms
+        .first()
+        .ok_or(RispErr::Reason("expected test form".to_string()))?;
+    let test_eval = eval(test_form, env)?;
+    match test_eval {
+        RispExp::Bool(b) => {
+            let form_idx = if b { 1 } else { 2 };
+            let res_form = arg_forms
+                .get(form_idx)
+                .ok_or(RispErr::Reason(format!("expected form idx = {}", form_idx)))?;
+            eval(res_form, env)
+        }
+        _ => Err(RispErr::Reason(format!(
+            "unexpected test form = {}",
+            test_form.to_string()
+        ))),
+    }
+}
+
+fn eval_def_args(arg_forms: &[RispExp], env: &mut RispEnv) -> Result<RispExp> {
+    if arg_forms.len() != 2 {
+        return Err(RispErr::Reason("def can only have two forms".to_string()));
+    }
+    let first_form = arg_forms.get(0).unwrap();
+    let second_form = arg_forms.get(1).unwrap();
+
+    let first_str = match first_form {
+        RispExp::Symbol(s) => Ok(s.clone()),
+        _ => Err(RispErr::Reason(
+            "expected first form to be a symbol".to_string(),
+        )),
+    }?;
+    let second_eval = eval(second_form, env)?;
+    env.data.insert(first_str, second_eval);
+
+    Ok(first_form.clone())
 }
 
 fn parse_eval(expr: String, env: &mut RispEnv) -> Result<RispExp> {
